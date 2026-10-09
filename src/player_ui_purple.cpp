@@ -1,5 +1,5 @@
-#if !defined(PLAYER_UI_PURPLE_THEME) || !PLAYER_UI_PURPLE_THEME
-#line 1
+#if defined(PLAYER_UI_PURPLE_THEME) && PLAYER_UI_PURPLE_THEME
+
 #include "player_ui.h"
 #include "lcd_display.h"
 
@@ -11,6 +11,21 @@ namespace
 constexpr uint16_t SCREEN_SIZE = 240;
 constexpr uint16_t MARGIN = 12;
 constexpr uint16_t CONTENT_WIDTH = SCREEN_SIZE - 2 * MARGIN;
+
+constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
+{
+    return static_cast<uint16_t>(((red & 0xF8U) << 8) |
+                                 ((green & 0xFCU) << 3) | (blue >> 3));
+}
+
+constexpr uint16_t UI_BG = rgb565(20, 12, 36);
+constexpr uint16_t UI_PANEL = rgb565(40, 23, 66);
+constexpr uint16_t UI_PURPLE = rgb565(167, 120, 244);
+constexpr uint16_t UI_LAVENDER = rgb565(216, 188, 255);
+constexpr uint16_t UI_PINK = rgb565(255, 167, 216);
+constexpr uint16_t UI_TEXT = COLOR_WHITE;
+constexpr uint16_t UI_TEXT_DIM = rgb565(195, 175, 225);
+constexpr uint16_t UI_MUTED = rgb565(105, 84, 133);
 
 enum class Screen { Unknown, Startup, Ready, Failure, Idle, Release, Confirm,
                     Playing, Paused, Timeout, Volume };
@@ -26,7 +41,7 @@ Screen startupStatus = Screen::Unknown;
 bool volumeOverlay = false;
 uint32_t volumeOverlayStart = 0;
 
-// Safety belongs to the UI wrapper; the verified LCD primitives are unchanged.
+// Keep clipping in the presentation wrapper, never in the verified driver.
 void fillRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
               uint16_t color)
 {
@@ -34,6 +49,80 @@ void fillRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
     if (width > SCREEN_SIZE - x) width = SCREEN_SIZE - x;
     if (height > SCREEN_SIZE - y) height = SCREEN_SIZE - y;
     LCD_FillRect(x, y, width, height, color);
+}
+
+// Four stepped corner bands give cards a soft outline without a new library.
+void roundedPanel(uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                  uint16_t color)
+{
+    if (width < 10 || height < 8)
+    {
+        fillRect(x, y, width, height, color);
+        return;
+    }
+    // Nonoverlapping bands draw each pixel once, even on the large overlay.
+    fillRect(x + 4, y, width - 8, 1, color);
+    fillRect(x + 2, y + 1, width - 4, 1, color);
+    fillRect(x + 1, y + 2, width - 2, 2, color);
+    fillRect(x, y + 4, width, height - 8, color);
+    fillRect(x + 1, y + height - 4, width - 2, 2, color);
+    fillRect(x + 2, y + height - 2, width - 4, 1, color);
+    fillRect(x + 4, y + height - 1, width - 8, 1, color);
+}
+
+void DrawMusicNote(uint16_t x, uint16_t y, uint8_t scale, uint16_t color)
+{
+    fillRect(x + 6 * scale, y, 2 * scale, 12 * scale, color);
+    fillRect(x + scale, y + 10 * scale, 7 * scale, scale, color);
+    fillRect(x, y + 11 * scale, 9 * scale, 3 * scale, color);
+    fillRect(x + scale, y + 14 * scale, 7 * scale, scale, color);
+    fillRect(x + 8 * scale, y + scale, 4 * scale, 2 * scale, color);
+    fillRect(x + 10 * scale, y + 3 * scale, 3 * scale, 2 * scale, color);
+}
+
+void DrawPlayIcon(uint16_t x, uint16_t y, uint8_t height, uint16_t color)
+{
+    for (uint8_t row = 0; row < height; ++row)
+    {
+        const uint8_t edge = row < height / 2 ? row : height - row - 1;
+        fillRect(x, y + row, edge + 1, 1, color);
+    }
+}
+
+void DrawPauseIcon(uint16_t x, uint16_t y, uint8_t height, uint16_t color)
+{
+    fillRect(x, y, 3, height, color);
+    fillRect(x + 6, y, 3, height, color);
+}
+
+void DrawSpeakerIcon(uint16_t x, uint16_t y, uint8_t scale, uint16_t color)
+{
+    fillRect(x, y + 5 * scale, 3 * scale, 6 * scale, color);
+    fillRect(x + 3 * scale, y + 3 * scale, 2 * scale, 10 * scale, color);
+    fillRect(x + 5 * scale, y + scale, 2 * scale, 14 * scale, color);
+    fillRect(x + 9 * scale, y + 4 * scale, scale, 8 * scale, color);
+    fillRect(x + 8 * scale, y + 3 * scale, scale, 2 * scale, color);
+    fillRect(x + 8 * scale, y + 11 * scale, scale, 2 * scale, color);
+    fillRect(x + 12 * scale, y + 2 * scale, scale, 12 * scale, color);
+    fillRect(x + 11 * scale, y + scale, scale, 2 * scale, color);
+    fillRect(x + 11 * scale, y + 13 * scale, scale, 2 * scale, color);
+}
+
+void DrawSparkle(uint16_t x, uint16_t y, uint8_t size, uint16_t color)
+{
+    fillRect(x, y + size, 2 * size + 1, 1, color);
+    fillRect(x + size, y, 1, 2 * size + 1, color);
+    if (size > 2) fillRect(x + size - 1, y + size - 1, 3, 3, color);
+}
+
+// The existing 5x7 font has no percent glyph; draw one as a tiny icon.
+void DrawPercent(uint16_t x, uint16_t y, uint8_t scale, uint16_t color)
+{
+    fillRect(x, y, 3 * scale, 3 * scale, color);
+    fillRect(x + 11 * scale, y + 11 * scale, 3 * scale, 3 * scale, color);
+    for (uint8_t i = 0; i < 12; ++i)
+        fillRect(x + (11 - i) * scale, y + i * scale,
+                 2 * scale, 2 * scale, color);
 }
 
 void normalize(const char *source, char *destination, size_t capacity)
@@ -97,7 +186,6 @@ bool wrapTitle(const char *title, size_t columns, char (&lines)[2][37])
         std::strcpy(lines[0], title);
         return true;
     }
-    // Choose the most balanced word boundary that fits both title lines.
     size_t split = 0;
     size_t bestDifference = length;
     for (size_t i = 1; i < length; ++i)
@@ -136,7 +224,6 @@ SongText formatSong(const Song &song)
         if (wrapTitle(text.title, CONTENT_WIDTH / (6 * text.scale), text.lines))
             return text;
     }
-    // Last resort for future metadata: bounded text using supported glyphs.
     text.scale = 1;
     std::snprintf(text.lines[0], sizeof(text.lines[0]), "%.36s", text.title);
     std::snprintf(text.lines[1], sizeof(text.lines[1]), "%.36s", text.title + 36);
@@ -147,92 +234,131 @@ void songText(const Song &song, uint16_t firstY, uint16_t secondY,
               uint16_t composerY)
 {
     const SongText text = formatSong(song);
-    centered(firstY, text.lines[0], text.scale, COLOR_WHITE);
-    centered(secondY, text.lines[1], text.scale, COLOR_WHITE);
-    centered(composerY, text.composer, 2, COLOR_CYAN);
+    centered(firstY + (text.lines[1][0] == '\0' ? 8 : 0),
+             text.lines[0], text.scale, UI_TEXT);
+    centered(secondY, text.lines[1], text.scale, UI_TEXT);
+    centered(composerY, text.composer, 1, UI_TEXT_DIM);
 }
 
-void heading(const char *text, uint16_t color)
+void heading(const char *text)
 {
-    centered(12, text, 2, color);
-    fillRect(MARGIN, 33, CONTENT_WIDTH, 1, COLOR_CYAN);
+    centered(12, text, 2, UI_LAVENDER);
+    DrawMusicNote(16, 8, 1, UI_PINK);
+    DrawMusicNote(211, 8, 1, UI_PURPLE);
+}
+
+void selectionHeading(Screen screen)
+{
+    fillRect(MARGIN, 8, CONTENT_WIDTH, 31, UI_BG);
+    heading(screen == Screen::Idle ? "MP3 PLAYER" :
+            screen == Screen::Release ? "SONG CAPTURED" : "CONFIRM SONG");
+    centered(32, screen == Screen::Idle ? "READY TO PLAY" :
+             screen == Screen::Release ? "WAITING FOR RELEASE" :
+             "PRESS UP TO PLAY", 1, UI_TEXT_DIM);
 }
 
 void playbackLabels(bool paused)
 {
-    centered(12, paused ? "PAUSED" : "NOW PLAYING", 2,
-             paused ? COLOR_RED : COLOR_CYAN);
-    centered(140, paused ? "PAUSED" : "PLAY", 2,
-             paused ? COLOR_RED : COLOR_GREEN);
-    centered(231, paused ? "HOLD UP RESUME" : "HOLD UP PAUSE", 1, COLOR_WHITE);
+    roundedPanel(34, 180, 172, 24, UI_PANEL);
+    const char *text = paused ? "PAUSED" : "NOW PLAYING";
+    const uint16_t x = (SCREEN_SIZE - (std::strlen(text) * 12 + 18)) / 2;
+    if (paused) DrawPauseIcon(x, 185, 13, UI_PINK);
+    else DrawPlayIcon(x, 185, 13, UI_PURPLE);
+    LCD_DrawText(x + 18, 185, text, paused ? UI_TEXT_DIM : UI_LAVENDER, 2);
 }
 
 void volumeNumber(uint8_t volume)
 {
-    char text[20];
-    std::snprintf(text, sizeof(text), "VOL %u PCT", volume);
-    centered(190, text, 2, COLOR_YELLOW);
+    char text[8];
+    std::snprintf(text, sizeof(text), "%u", volume);
+    LCD_DrawText(18, 207, "VOLUME", UI_TEXT_DIM, 1);
+    LCD_DrawText(202 - std::strlen(text) * 12, 204, text, UI_LAVENDER, 2);
+    DrawPercent(208, 204, 1, UI_LAVENDER);
 }
 
-void volumeBar(uint16_t y, uint8_t volume, uint16_t color, bool outline = true)
+void volumeBar(uint16_t y, uint8_t volume, bool outline = true)
 {
-    if (outline) fillRect(20, y, 200, 16, COLOR_WHITE);
-    fillRect(22, y + 2, 196, 12, COLOR_BLACK);
-    const uint16_t width = 196UL * volume / 100;
-    fillRect(22, y + 2, width, 12, color); // Wrapper skips volume-zero fill.
+    const bool overlay = y == 166;
+    const uint16_t x = overlay ? 30 : 16;
+    const uint16_t outerWidth = overlay ? 180 : 208;
+    const uint16_t outerHeight = overlay ? 14 : 10;
+    const uint16_t width = outerWidth - 4;
+    const uint16_t height = outerHeight - 4;
+    if (outline) roundedPanel(x, y, outerWidth, outerHeight, UI_MUTED);
+    fillRect(x + 2, y + 2, width, height, UI_PANEL);
+    fillRect(x + 2, y + 2, width * static_cast<uint32_t>(volume) / 100,
+             height, UI_PURPLE);
+}
+
+void musicArtwork()
+{
+    roundedPanel(85, 36, 70, 64, UI_PURPLE);
+    roundedPanel(87, 38, 66, 60, UI_PANEL);
+    DrawMusicNote(99, 47, 3, UI_LAVENDER);
+    DrawSparkle(58, 65, 4, UI_PINK);
+    DrawSparkle(173, 49, 3, UI_PURPLE);
 }
 
 void branding(const char *status, uint16_t color)
 {
-    LCD_Fill(COLOR_BLACK);
-    centered(64, "RT-SPARK", 3, COLOR_CYAN);
-    centered(104, "MP3 PLAYER", 3, COLOR_WHITE);
-    centered(157, status, 2, color);
+    LCD_Fill(UI_BG);
+    heading("MY PLAYER");
+    musicArtwork();
+    centered(119, "MP3 PLAYER", 3, UI_TEXT);
+    centered(153, "RT-SPARK", 1, UI_TEXT_DIM);
+    roundedPanel(24, 177, 192, 31, UI_PANEL);
+    centered(185, status, 2, color);
+    centered(224, "A LITTLE MUSIC MOMENT", 1, UI_TEXT_DIM);
 }
 
 void displayPlayback(bool paused, const Song &song, uint8_t songIndex,
                      uint8_t volume)
 {
-    LCD_Fill(COLOR_BLACK);
-    fillRect(MARGIN, 33, CONTENT_WIDTH, 1, COLOR_CYAN);
-    songText(song, 53, 81, 113);
+    LCD_Fill(UI_BG);
+    heading("MY PLAYER");
+    musicArtwork();
+    char text[12];
+    std::snprintf(text, sizeof(text), "SONG %u", songIndex + 1);
+    LCD_DrawText(177, 88, text, UI_TEXT_DIM, 1);
+    songText(song, 108, 134, 166);
     playbackLabels(paused);
-    volumeBar(165, volume, COLOR_CYAN);
     volumeNumber(volume);
-    char text[24];
-    std::snprintf(text, sizeof(text), "SONG %u - %u%u%u", songIndex + 1,
-                  (songIndex >> 2) & 1, (songIndex >> 1) & 1, songIndex & 1);
-    // Footer shares one row with compact volume hints.
-    LCD_DrawText(12, 212, text, COLOR_CYAN, 1);
-    LCD_DrawText(162, 212, "POT VOLUME", COLOR_WHITE, 1);
+    volumeBar(226, volume);
 }
 
 void largeVolumeNumber(uint8_t volume)
 {
-    fillRect(MARGIN, 70, CONTENT_WIDTH, 46, COLOR_BLACK);
+    fillRect(18, 105, 204, 47, UI_PANEL);
     char text[8];
     std::snprintf(text, sizeof(text), "%u", volume);
-    centered(72, text, 6, COLOR_YELLOW);
+    const uint16_t numberWidth = std::strlen(text) * 36;
+    const uint16_t x = (SCREEN_SIZE - numberWidth - 34) / 2;
+    LCD_DrawText(x, 108, text, UI_TEXT, 6);
+    DrawPercent(x + numberWidth + 6, 115, 2, UI_PINK);
 }
 
 void volumeFooter(const PlayerUiView &view)
 {
-    fillRect(MARGIN, 224, CONTENT_WIDTH, 9, COLOR_BLACK);
+    fillRect(MARGIN, 224, CONTENT_WIDTH, 9, UI_BG);
     char text[24];
     std::snprintf(text, sizeof(text), "%s - SONG %u",
                   view.playback == UiPlaybackState::Paused ? "PAUSED" : "PLAY",
                   view.currentIndex + 1);
-    centered(225, text, 1, COLOR_CYAN);
+    centered(225, text, 1, UI_TEXT_DIM);
 }
 
 void displayVolume(const PlayerUiView &view)
 {
-    LCD_Fill(COLOR_BLACK);
-    centered(24, "VOLUME", 2, COLOR_CYAN);
+    LCD_Fill(UI_BG);
+    DrawMusicNote(18, 6, 1, UI_PINK);
+    DrawSparkle(209, 9, 3, UI_PURPLE);
+    roundedPanel(12, 29, 216, 175, UI_PURPLE);
+    roundedPanel(14, 31, 212, 171, UI_PANEL);
+    centered(44, "VOLUME", 2, UI_LAVENDER);
+    DrawSpeakerIcon(107, 68, 2, UI_PURPLE);
     largeVolumeNumber(view.volume);
-    centered(123, "PCT", 2, COLOR_WHITE);
-    volumeBar(159, view.volume, COLOR_YELLOW);
-    centered(208, "TURN POT FOR VOLUME", 1, COLOR_WHITE);
+    volumeBar(166, view.volume);
+    centered(188, "TURN POT FOR VOLUME", 1, UI_TEXT_DIM);
     volumeFooter(view);
 }
 
@@ -242,58 +368,60 @@ void bitBoxes(uint8_t bits, uint8_t previousBits = 0, bool partial = false)
     for (uint8_t i = 0; i < 3; ++i)
     {
         if (partial && ((bits ^ previousBits) & (4 >> i)) == 0) continue;
-        const uint16_t x = 52 + i * 50;
+        const uint16_t x = 46 + i * 52;
         const bool pressed = (bits & (4 >> i)) != 0;
-        fillRect(x, 42, 36, 30, pressed ? COLOR_CYAN : COLOR_WHITE);
-        if (!pressed) fillRect(x + 1, 43, 34, 28, COLOR_BLACK);
+        roundedPanel(x, 46, 44, 34, pressed ? UI_PURPLE : UI_MUTED);
+        if (!pressed) roundedPanel(x + 1, 47, 42, 32, UI_PANEL);
         const char digit[] = {pressed ? '1' : '0', '\0'};
-        LCD_DrawText(x + 9, 46, digit, pressed ? COLOR_BLACK : COLOR_WHITE, 3);
-        LCD_DrawText(x + (36 - std::strlen(labels[i]) * 6) / 2, 78,
-                     labels[i], COLOR_WHITE, 1);
+        LCD_DrawText(x + 14, 52, digit, pressed ? UI_BG : UI_LAVENDER, 3);
+        LCD_DrawText(x + (44 - std::strlen(labels[i]) * 6) / 2, 84,
+                     labels[i], UI_TEXT_DIM, 1);
     }
 }
 
 void countdown(uint8_t seconds)
 {
-    fillRect(MARGIN, 228, CONTENT_WIDTH, 9, COLOR_BLACK);
+    fillRect(18, 217, 204, 13, UI_PANEL);
     char text[12];
     std::snprintf(text, sizeof(text), "%u SEC", seconds);
-    centered(229, text, 1, COLOR_YELLOW);
+    centered(217, text, 1, UI_PINK);
+    fillRect(32, 229, 176, 3, UI_MUTED);
+    fillRect(32, 229, 176UL * seconds / 5, 3, UI_PURPLE);
 }
 
 void selectionMetadata(const PlayerUiView &view)
 {
     char text[16];
     std::snprintf(text, sizeof(text), "SONG %u", view.candidateIndex + 1);
-    centered(94, text, 2, COLOR_CYAN);
-    if (view.candidateSong) songText(*view.candidateSong, 115, 143, 177);
+    centered(103, text, 1, UI_LAVENDER);
+    if (view.candidateSong) songText(*view.candidateSong, 119, 143, 176);
 }
 
 void selectionAction(Screen screen, uint8_t seconds)
 {
-    fillRect(MARGIN, 202, CONTENT_WIDTH, 18, COLOR_BLACK);
-    fillRect(MARGIN, 228, CONTENT_WIDTH, 9, COLOR_BLACK);
+    fillRect(MARGIN, 194, CONTENT_WIDTH, 40, UI_BG);
+    roundedPanel(MARGIN, 194, CONTENT_WIDTH, 38, UI_PANEL);
     if (screen == Screen::Release)
     {
-        centered(204, "RELEASE ALL", 2, COLOR_YELLOW);
-        centered(229, "THEN UP CONFIRM", 1, COLOR_WHITE);
+        centered(201, "RELEASE ALL", 2, UI_PINK);
+        centered(221, "BUTTONS", 1, UI_TEXT_DIM);
     }
     else if (screen == Screen::Confirm)
     {
-        centered(204, "UP CONFIRM", 2, COLOR_GREEN);
+        centered(201, "UP CONFIRM", 2, UI_LAVENDER);
         countdown(seconds);
     }
     else
     {
-        centered(204, "UP SELECT", 2, COLOR_GREEN);
-        centered(229, "HOLD BITS AND PRESS UP", 1, COLOR_WHITE);
+        centered(201, "UP SELECT", 2, UI_LAVENDER);
+        centered(221, "CHOOSE 000 - 111", 1, UI_TEXT_DIM);
     }
 }
 
 void displaySelection(const PlayerUiView &view, Screen screen, uint8_t seconds)
 {
-    LCD_Fill(COLOR_BLACK);
-    heading(screen == Screen::Idle ? "SELECT SONG" : "CONFIRM SONG", COLOR_CYAN);
+    LCD_Fill(UI_BG);
+    selectionHeading(screen);
     bitBoxes(view.candidateIndex);
     selectionMetadata(view);
     selectionAction(screen, seconds);
@@ -301,11 +429,19 @@ void displaySelection(const PlayerUiView &view, Screen screen, uint8_t seconds)
 
 void displayTimeout()
 {
-    LCD_Fill(COLOR_BLACK);
-    centered(64, "CANCELLED", 3, COLOR_RED);
-    centered(114, "SELECTION TIMEOUT", 2, COLOR_WHITE);
-    centered(153, "NO SONG CHANGED", 2, COLOR_WHITE);
-    centered(194, "RETURNING TO PLAYER", 1, COLOR_CYAN);
+    LCD_Fill(UI_BG);
+    heading("MY PLAYER");
+    roundedPanel(79, 44, 82, 63, UI_PANEL);
+    DrawMusicNote(97, 55, 3, UI_MUTED);
+    for (uint8_t i = 0; i < 12; ++i)
+    {
+        fillRect(139 + i, 78 + i, 2, 2, UI_PINK);
+        fillRect(150 - i, 78 + i, 2, 2, UI_PINK);
+    }
+    centered(128, "SONG CHANGE", 2, UI_TEXT);
+    centered(155, "CANCELLED", 3, UI_PINK);
+    centered(197, "NO SONG CHANGED", 1, UI_TEXT_DIM);
+    centered(224, "RETURNING TO PLAYER", 1, UI_LAVENDER);
 }
 
 bool isPlayback(Screen screen)
@@ -320,16 +456,15 @@ bool isSelection(Screen screen)
 
 void updatePlaybackVolume(uint8_t volume)
 {
-    volumeBar(165, volume, COLOR_CYAN, false);
-    fillRect(MARGIN, 188, CONTENT_WIDTH, 17, COLOR_BLACK);
+    volumeBar(226, volume, false);
+    fillRect(148, 202, 80, 17, UI_BG);
     volumeNumber(volume);
 }
 
 void updatePlaybackLabels(bool paused)
 {
-    fillRect(MARGIN, 12, CONTENT_WIDTH, 14, COLOR_BLACK);
-    fillRect(MARGIN, 140, CONTENT_WIDTH, 14, COLOR_BLACK);
-    fillRect(MARGIN, 231, CONTENT_WIDTH, 7, COLOR_BLACK);
+    // Playing and paused share the artwork/title: redraw the status card only.
+    fillRect(34, 180, 172, 24, UI_BG);
     playbackLabels(paused);
 }
 } // namespace
@@ -340,21 +475,21 @@ void PlayerUI_ShowStartup()
     renderedScreen = Screen::Startup;
     renderedSong = nullptr;
     renderedPlayback = UiPlaybackState::Idle;
-    branding("INITIALIZING", COLOR_YELLOW);
+    branding("INITIALIZING", UI_PINK);
 }
 
 void PlayerUI_ShowAudioReady(uint32_t now)
 {
     startupStatusStart = now;
     startupStatus = renderedScreen = Screen::Ready;
-    branding("AUDIO READY", COLOR_GREEN);
+    branding("AUDIO READY", UI_LAVENDER);
 }
 
 void PlayerUI_ShowAudioFailure(uint32_t now)
 {
     startupStatusStart = now;
     startupStatus = renderedScreen = Screen::Failure;
-    branding("INIT FAILED", COLOR_RED);
+    branding("INIT FAILED", UI_PINK);
 }
 
 void PlayerUI_ConfirmationReady(uint32_t inputNow)
@@ -423,15 +558,12 @@ void PlayerUI_Update(const PlayerUiView &view, uint32_t now)
         if (metadataChanged)
         {
             bitBoxes(index, renderedIndex, true);
-            fillRect(MARGIN, 94, CONTENT_WIDTH, 14, COLOR_BLACK);
-            fillRect(MARGIN, 115, CONTENT_WIDTH, 76, COLOR_BLACK);
+            fillRect(MARGIN, 101, CONTENT_WIDTH, 85, UI_BG);
             selectionMetadata(view);
         }
         if (screen != renderedScreen)
         {
-            fillRect(MARGIN, 12, CONTENT_WIDTH, 14, COLOR_BLACK);
-            centered(12, screen == Screen::Idle ? "SELECT SONG" : "CONFIRM SONG",
-                     2, COLOR_CYAN);
+            selectionHeading(screen);
             selectionAction(screen, seconds);
         }
         else if (screen == Screen::Confirm && seconds != renderedCountdown)
@@ -447,7 +579,7 @@ void PlayerUI_Update(const PlayerUiView &view, uint32_t now)
         if (volumeChanged)
         {
             largeVolumeNumber(view.volume);
-            volumeBar(159, view.volume, COLOR_YELLOW, false);
+            volumeBar(166, view.volume, false);
         }
         if (view.playback != renderedPlayback) volumeFooter(view);
     }
@@ -460,4 +592,4 @@ void PlayerUI_Update(const PlayerUiView &view, uint32_t now)
     renderedPlayback = view.playback;
 }
 
-#endif // Legacy Stage-5 presentation
+#endif // PLAYER_UI_PURPLE_THEME
