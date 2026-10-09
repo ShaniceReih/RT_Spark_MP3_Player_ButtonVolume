@@ -1,0 +1,249 @@
+#include "stm32f4xx_hal.h"
+#include "song_def.h"
+
+#include <cstring>
+#include <cstdio>
+
+UART_HandleTypeDef huart1;
+
+
+/* =========================================================
+   SysTick
+   ========================================================= */
+extern "C" void SysTick_Handler(void)
+{
+    HAL_IncTick();
+}
+
+
+/* =========================================================
+   UART
+   ========================================================= */
+static void UART1_Init(void)
+{
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_USART1_CLK_ENABLE();
+
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin = GPIO_PIN_9 | GPIO_PIN_10;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF7_USART1;
+
+    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+    huart1.Instance = USART1;
+    huart1.Init.BaudRate = 115200;
+    huart1.Init.WordLength = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits = UART_STOPBITS_1;
+    huart1.Init.Parity = UART_PARITY_NONE;
+    huart1.Init.Mode = UART_MODE_TX_RX;
+    huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+
+    HAL_UART_Init(&huart1);
+}
+
+
+/* =========================================================
+   Buttons
+   ========================================================= */
+static void Buttons_Init(void)
+{
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin =
+        GPIO_PIN_0 |     // LEFT
+        GPIO_PIN_1 |     // DOWN
+        GPIO_PIN_4 |     // RIGHT
+        GPIO_PIN_5;      // UP
+
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+}
+
+
+/* =========================================================
+   UART print
+   ========================================================= */
+static void uart_print(const char *text)
+{
+    HAL_UART_Transmit(
+        &huart1,
+        (uint8_t *)text,
+        strlen(text),
+        HAL_MAX_DELAY
+    );
+}
+
+
+/* =========================================================
+   8 songs used by the MP3 player
+   ========================================================= */
+Song *songs[8] =
+{
+    &FUR_ELISE,
+    &CANNON_IN_D,
+    &MINUET_IN_G_MAJOR,
+    &TURKISH_MARCH,
+    &NOCTRUNE_IN_E_FLAT,
+    &WALTZ_NO2,
+    &NOCTRUNE_IN_C_SHARP_MAJOR,
+    &SYMPHONY_NO40
+};
+
+
+/* =========================================================
+   Print song information
+   ========================================================= */
+static void print_song(uint8_t index)
+{
+    uart_print(songs[index]->name1.c_str());
+    uart_print(" ");
+    uart_print(songs[index]->name2.c_str());
+    uart_print("\r\n");
+}
+
+
+/* =========================================================
+   Main
+   ========================================================= */
+int main(void)
+{
+    HAL_Init();
+
+    UART1_Init();
+    Buttons_Init();
+
+    uart_print("\r\n");
+    uart_print("==============================\r\n");
+    uart_print("     RT-SPARK MP3 PLAYER\r\n");
+    uart_print("==============================\r\n");
+
+    uart_print("DOWN  = bit 2\r\n");
+    uart_print("LEFT  = bit 1\r\n");
+    uart_print("RIGHT = bit 0\r\n");
+    uart_print("UP    = SELECT / CONFIRM\r\n\r\n");
+
+
+    GPIO_PinState previousUp = GPIO_PIN_SET;
+
+    bool waitingForConfirmation = false;
+
+    uint8_t pendingSong = 0;
+    uint8_t currentSong = 0;
+
+    uint32_t confirmationStart = 0;
+
+    char message[100];
+
+
+    while (1)
+    {
+        GPIO_PinState up =
+            HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_5);
+
+
+        /* Read the three binary-selection buttons */
+
+        uint8_t bit2 =
+            (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_1)
+             == GPIO_PIN_RESET) ? 1 : 0;
+
+        uint8_t bit1 =
+            (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_0)
+             == GPIO_PIN_RESET) ? 1 : 0;
+
+        uint8_t bit0 =
+            (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_4)
+             == GPIO_PIN_RESET) ? 1 : 0;
+
+
+        uint8_t songNumber =
+            (bit2 << 2) |
+            (bit1 << 1) |
+            bit0;
+
+
+        /* =================================================
+           UP button pressed
+           ================================================= */
+        if (up == GPIO_PIN_RESET &&
+            previousUp == GPIO_PIN_SET)
+        {
+            /* First press = select */
+            if (!waitingForConfirmation)
+            {
+                pendingSong = songNumber;
+
+                snprintf(
+                    message,
+                    sizeof(message),
+                    "\r\nSelected %d%d%d -> SONG %d\r\n",
+                    bit2,
+                    bit1,
+                    bit0,
+                    pendingSong + 1
+                );
+
+                uart_print(message);
+
+                uart_print("Song: ");
+                print_song(pendingSong);
+
+                uart_print(
+                    "Release all buttons.\r\n"
+                    "Press UP again within 5 seconds "
+                    "to confirm.\r\n"
+                );
+
+                waitingForConfirmation = true;
+
+                confirmationStart = HAL_GetTick();
+            }
+
+            /* Second press = confirm */
+            else
+            {
+                currentSong = pendingSong;
+
+                uart_print("\r\n==============================\r\n");
+                uart_print("SONG CONFIRMED!\r\n");
+                uart_print("==============================\r\n");
+
+                uart_print("Now playing: ");
+                print_song(currentSong);
+
+                uart_print("\r\n");
+
+                waitingForConfirmation = false;
+            }
+        }
+
+
+        /* =================================================
+           5-second timeout
+           ================================================= */
+        if (waitingForConfirmation)
+        {
+            if ((HAL_GetTick() - confirmationStart) >= 5000)
+            {
+                uart_print("\r\nTIMEOUT!\r\n");
+                uart_print("Song selection cancelled.\r\n\r\n");
+
+                waitingForConfirmation = false;
+            }
+        }
+
+
+        previousUp = up;
+
+        HAL_Delay(20);
+    }
+}

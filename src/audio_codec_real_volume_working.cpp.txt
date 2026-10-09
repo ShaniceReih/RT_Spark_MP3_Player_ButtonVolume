@@ -1,0 +1,817 @@
+#include "audio_codec.h"
+
+
+/* =========================================================
+   ES8388 CONTROL BUS
+   RT-SPARK SOFTWARE I2C
+
+   PF1 = SCL
+   PF0 = SDA
+
+   ES8388 address = 0x10
+   ========================================================= */
+
+#define AUDIO_SCL_PORT GPIOF
+#define AUDIO_SCL_PIN  GPIO_PIN_1
+
+#define AUDIO_SDA_PORT GPIOF
+#define AUDIO_SDA_PIN  GPIO_PIN_0
+
+#define ES8388_ADDR     0x10
+
+
+/* =========================================================
+   ES8388 REGISTERS
+   ========================================================= */
+
+#define ES8388_CONTROL1       0x00
+#define ES8388_CONTROL2       0x01
+#define ES8388_CHIPPOWER      0x02
+#define ES8388_ADCPOWER       0x03
+#define ES8388_DACPOWER       0x04
+#define ES8388_MASTERMODE     0x08
+
+#define ES8388_DACCONTROL1    0x17
+#define ES8388_DACCONTROL2    0x18
+#define ES8388_DACCONTROL3    0x19
+#define ES8388_DACCONTROL4    0x1A
+#define ES8388_DACCONTROL5    0x1B
+
+#define ES8388_DACCONTROL16   0x26
+#define ES8388_DACCONTROL17   0x27
+#define ES8388_DACCONTROL20   0x2A
+#define ES8388_DACCONTROL21   0x2B
+#define ES8388_DACCONTROL23   0x2D
+#define ES8388_DACCONTROL24   0x2E
+#define ES8388_DACCONTROL25   0x2F
+
+
+/* =========================================================
+   I2S
+   ========================================================= */
+
+static I2S_HandleTypeDef hi2s3;
+
+
+/* =========================================================
+   SOFTWARE I2C
+   ========================================================= */
+
+static void I2C_Delay(void)
+{
+    for (
+        volatile uint32_t i = 0;
+        i < 120;
+        i++
+    )
+    {
+        __NOP();
+    }
+}
+
+
+static void SDA_High(void)
+{
+    HAL_GPIO_WritePin(
+        AUDIO_SDA_PORT,
+        AUDIO_SDA_PIN,
+        GPIO_PIN_SET
+    );
+}
+
+
+static void SDA_Low(void)
+{
+    HAL_GPIO_WritePin(
+        AUDIO_SDA_PORT,
+        AUDIO_SDA_PIN,
+        GPIO_PIN_RESET
+    );
+}
+
+
+static void SCL_High(void)
+{
+    HAL_GPIO_WritePin(
+        AUDIO_SCL_PORT,
+        AUDIO_SCL_PIN,
+        GPIO_PIN_SET
+    );
+}
+
+
+static void SCL_Low(void)
+{
+    HAL_GPIO_WritePin(
+        AUDIO_SCL_PORT,
+        AUDIO_SCL_PIN,
+        GPIO_PIN_RESET
+    );
+}
+
+
+static void AudioI2C_Init(void)
+{
+    __HAL_RCC_GPIOF_CLK_ENABLE();
+
+    GPIO_InitTypeDef gpio = {0};
+
+    gpio.Pin =
+        AUDIO_SCL_PIN |
+        AUDIO_SDA_PIN;
+
+    gpio.Mode =
+        GPIO_MODE_OUTPUT_OD;
+
+    gpio.Pull =
+        GPIO_PULLUP;
+
+    gpio.Speed =
+        GPIO_SPEED_FREQ_HIGH;
+
+    HAL_GPIO_Init(
+        GPIOF,
+        &gpio
+    );
+
+    SDA_High();
+    SCL_High();
+
+    I2C_Delay();
+}
+
+
+static void I2C_Start(void)
+{
+    SDA_High();
+    SCL_High();
+
+    I2C_Delay();
+
+    SDA_Low();
+
+    I2C_Delay();
+
+    SCL_Low();
+
+    I2C_Delay();
+}
+
+
+static void I2C_Stop(void)
+{
+    SDA_Low();
+
+    I2C_Delay();
+
+    SCL_High();
+
+    I2C_Delay();
+
+    SDA_High();
+
+    I2C_Delay();
+}
+
+
+static bool I2C_WriteByte(
+    uint8_t value)
+{
+    for (
+        uint8_t bit = 0;
+        bit < 8;
+        bit++
+    )
+    {
+        if (value & 0x80)
+        {
+            SDA_High();
+        }
+        else
+        {
+            SDA_Low();
+        }
+
+        I2C_Delay();
+
+        SCL_High();
+
+        I2C_Delay();
+
+        SCL_Low();
+
+        I2C_Delay();
+
+        value <<= 1;
+    }
+
+
+    /* Release SDA for ACK */
+
+    SDA_High();
+
+    I2C_Delay();
+
+    SCL_High();
+
+    I2C_Delay();
+
+
+    GPIO_PinState ack =
+        HAL_GPIO_ReadPin(
+            AUDIO_SDA_PORT,
+            AUDIO_SDA_PIN
+        );
+
+
+    SCL_Low();
+
+    I2C_Delay();
+
+
+    return (
+        ack ==
+        GPIO_PIN_RESET
+    );
+}
+
+
+/* =========================================================
+   WRITE ES8388 REGISTER
+   ========================================================= */
+
+static bool ES8388_Write(
+    uint8_t reg,
+    uint8_t value)
+{
+    I2C_Start();
+
+    if (
+        !I2C_WriteByte(
+            ES8388_ADDR << 1
+        )
+    )
+    {
+        I2C_Stop();
+        return false;
+    }
+
+
+    if (
+        !I2C_WriteByte(reg)
+    )
+    {
+        I2C_Stop();
+        return false;
+    }
+
+
+    if (
+        !I2C_WriteByte(value)
+    )
+    {
+        I2C_Stop();
+        return false;
+    }
+
+
+    I2C_Stop();
+
+    return true;
+}
+
+
+/* =========================================================
+   PROBE
+   ========================================================= */
+
+bool AudioCodec_Probe(void)
+{
+    AudioI2C_Init();
+
+    I2C_Start();
+
+    bool detected =
+        I2C_WriteByte(
+            ES8388_ADDR << 1
+        );
+
+    I2C_Stop();
+
+    return detected;
+}
+
+
+/* =========================================================
+   I2S GPIO INITIALIZATION
+
+   Official RT-Spark audio wiring:
+
+   PC7  = I2S3 MCLK
+   PA15 = I2S3 WS
+   PB3  = I2S3 CK
+   PB5  = I2S3 SD
+   ========================================================= */
+
+extern "C"
+void HAL_I2S_MspInit(
+    I2S_HandleTypeDef *handle)
+{
+    if (
+        handle->Instance != SPI3
+    )
+    {
+        return;
+    }
+
+
+    __HAL_RCC_SPI3_CLK_ENABLE();
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+
+    GPIO_InitTypeDef gpio = {0};
+
+
+    /* PC7 = MCLK */
+
+    gpio.Pin =
+        GPIO_PIN_7;
+
+    gpio.Mode =
+        GPIO_MODE_AF_PP;
+
+    gpio.Pull =
+        GPIO_NOPULL;
+
+    gpio.Speed =
+        GPIO_SPEED_FREQ_VERY_HIGH;
+
+    gpio.Alternate =
+        GPIO_AF6_SPI3;
+
+    HAL_GPIO_Init(
+        GPIOC,
+        &gpio
+    );
+
+
+    /* PA15 = WS */
+
+    gpio.Pin =
+        GPIO_PIN_15;
+
+    HAL_GPIO_Init(
+        GPIOA,
+        &gpio
+    );
+
+
+    /* PB3 = CK
+       PB5 = SD */
+
+    gpio.Pin =
+        GPIO_PIN_3 |
+        GPIO_PIN_5;
+
+    HAL_GPIO_Init(
+        GPIOB,
+        &gpio
+    );
+}
+
+
+/* =========================================================
+   I2S INITIALIZATION
+   ========================================================= */
+
+static bool AudioI2S_Init(void)
+{
+    RCC_PeriphCLKInitTypeDef clockConfig = {0};
+
+    clockConfig.PeriphClockSelection =
+        RCC_PERIPHCLK_I2S;
+
+    clockConfig.PLLI2S.PLLI2SN =
+        192;
+
+    clockConfig.PLLI2S.PLLI2SR =
+        2;
+
+
+    if (
+        HAL_RCCEx_PeriphCLKConfig(
+            &clockConfig
+        ) != HAL_OK
+    )
+    {
+        return false;
+    }
+
+
+    hi2s3.Instance =
+        SPI3;
+
+    hi2s3.Init.Mode =
+        I2S_MODE_MASTER_TX;
+
+    hi2s3.Init.Standard =
+        I2S_STANDARD_PHILIPS;
+
+    hi2s3.Init.DataFormat =
+        I2S_DATAFORMAT_16B;
+
+    hi2s3.Init.MCLKOutput =
+        I2S_MCLKOUTPUT_ENABLE;
+
+    hi2s3.Init.AudioFreq =
+        I2S_AUDIOFREQ_44K;
+
+    hi2s3.Init.CPOL =
+        I2S_CPOL_LOW;
+
+    hi2s3.Init.ClockSource =
+        I2S_CLOCK_PLL;
+
+    hi2s3.Init.FullDuplexMode =
+        I2S_FULLDUPLEXMODE_DISABLE;
+
+
+    if (
+        HAL_I2S_Init(
+            &hi2s3
+        ) != HAL_OK
+    )
+    {
+        return false;
+    }
+
+
+    return true;
+}
+
+
+/* =========================================================
+   REAL CODEC VOLUME
+
+   0   = quiet
+   100 = maximum
+   ========================================================= */
+
+void AudioCodec_SetVolume(
+    uint8_t volume)
+{
+    if (
+        volume > 100
+    )
+    {
+        volume = 100;
+    }
+
+
+    /*
+     * Same mapping used by the RT-Spark ES8388 driver.
+     */
+
+    uint8_t attenuation =
+        (uint8_t)(
+            (
+                192UL *
+                (100UL - volume)
+            )
+            / 100UL
+        );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL4,
+        attenuation
+    );
+
+    ES8388_Write(
+        ES8388_DACCONTROL5,
+        attenuation
+    );
+}
+
+
+/* =========================================================
+   CODEC INITIALIZATION
+   ========================================================= */
+
+bool AudioCodec_Init(void)
+{
+    AudioI2C_Init();
+
+
+    if (
+        !AudioCodec_Probe()
+    )
+    {
+        return false;
+    }
+
+
+    /*
+     * Start muted.
+     */
+
+    if (
+        !ES8388_Write(
+            ES8388_DACCONTROL3,
+            0x04
+        )
+    )
+    {
+        return false;
+    }
+
+
+    ES8388_Write(
+        ES8388_CONTROL2,
+        0x50
+    );
+
+
+    ES8388_Write(
+        ES8388_CHIPPOWER,
+        0x00
+    );
+
+
+    /*
+     * Codec operates as I2S slave.
+     */
+
+    ES8388_Write(
+        ES8388_MASTERMODE,
+        0x00
+    );
+
+
+    /*
+     * Configure DAC.
+     */
+
+    ES8388_Write(
+        ES8388_DACPOWER,
+        0xC0
+    );
+
+
+    ES8388_Write(
+        ES8388_CONTROL1,
+        0x12
+    );
+
+
+    /*
+     * 16-bit I2S.
+     */
+
+    ES8388_Write(
+        ES8388_DACCONTROL1,
+        0x18
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL2,
+        0x02
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL16,
+        0x00
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL17,
+        0x9C
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL20,
+        0x9C
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL21,
+        0x80
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL23,
+        0x00
+    );
+
+
+    /*
+     * Enable DAC / headphone outputs.
+     */
+
+    ES8388_Write(
+        ES8388_DACPOWER,
+        0x3C
+    );
+
+
+    /*
+     * LOUT1 / ROUT1 output levels.
+     */
+
+    ES8388_Write(
+        ES8388_DACCONTROL24,
+        0x1E
+    );
+
+
+    ES8388_Write(
+        ES8388_DACCONTROL25,
+        0x1E
+    );
+
+
+    /*
+     * Begin LOW for first headphone test.
+     */
+
+    AudioCodec_SetVolume(
+        50
+    );
+
+
+    /*
+     * Restart codec state machine.
+     */
+
+    ES8388_Write(
+        ES8388_CHIPPOWER,
+        0xF0
+    );
+
+    HAL_Delay(10);
+
+    ES8388_Write(
+        ES8388_CHIPPOWER,
+        0x00
+    );
+
+
+    /*
+     * Unmute DAC.
+     */
+
+    ES8388_Write(
+        ES8388_DACCONTROL3,
+        0x00
+    );
+
+
+    if (
+        !AudioI2S_Init()
+    )
+    {
+        return false;
+    }
+
+
+    return true;
+}
+
+
+/* =========================================================
+   TEST TONE
+
+   Generates a quiet ~440 Hz square wave.
+
+   Duration is specified in milliseconds.
+   ========================================================= */
+
+bool Audio_PlayTestTone(
+    uint32_t durationMs)
+{
+    /*
+     * 128 stereo frames:
+     *
+     * L, R, L, R...
+     */
+
+    int16_t buffer[256];
+
+
+    uint32_t phase =
+        0;
+
+
+    /*
+     * 440 Hz phase increment
+     * at approximately 44.1 kHz.
+     */
+
+    const uint32_t phaseStep =
+        42852281UL;
+
+
+    uint32_t start =
+        HAL_GetTick();
+
+
+    while (
+        HAL_GetTick() -
+        start <
+        durationMs
+    )
+    {
+        for (
+            uint32_t frame = 0;
+            frame < 128;
+            frame++
+        )
+        {
+            phase +=
+                phaseStep;
+
+
+            int16_t sample;
+
+
+            if (
+                phase &
+                0x80000000UL
+            )
+            {
+                sample =
+                    5000;
+            }
+            else
+            {
+                sample =
+                    -5000;
+            }
+
+
+            /*
+             * Stereo:
+             * same sample to LEFT and RIGHT.
+             */
+
+            buffer[
+                frame * 2
+            ] =
+                sample;
+
+
+            buffer[
+                frame * 2 + 1
+            ] =
+                sample;
+        }
+
+
+        if (
+            HAL_I2S_Transmit(
+                &hi2s3,
+                (uint16_t *)buffer,
+                256,
+                100
+            ) != HAL_OK
+        )
+        {
+            return false;
+        }
+    }
+
+
+    /*
+     * End with silence.
+     */
+
+    for (
+        uint32_t i = 0;
+        i < 256;
+        i++
+    )
+    {
+        buffer[i] =
+            0;
+    }
+
+
+    HAL_I2S_Transmit(
+        &hi2s3,
+        (uint16_t *)buffer,
+        256,
+        100
+    );
+
+
+    return true;
+}

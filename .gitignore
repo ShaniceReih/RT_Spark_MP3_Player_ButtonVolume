@@ -1,0 +1,13 @@
+@"
+.pio/
+.vscode/
+Microsoft/
+RT_Spark_MP3_Player_ButtonVolume
+
+*.elf
+*.bin
+*.hex
+
+.DS_Store
+Thumbs.db
+"@ | Set-Content .gitignore
