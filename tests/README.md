@@ -188,3 +188,23 @@ resume/yield behavior, unchanged integer/string formats, truncation/return value
 buffer boundaries, size-zero queries and rejection of ISR formatting. Stage 5
 alone wraps snprintf at link time; the existing PlayerUI and kernel/newlib
 configuration are unchanged, and audio interrupts stay enabled during formatting.
+
+# Native purple PlayerUI verification
+
+This presentation-only fixture compiles the purple renderer with the same
+PlayerUI API and actual song metadata. The legacy renderer is also supplied to
+the command so its theme guard is checked; existing UI tests still use the
+legacy renderer without the theme flag.
+
+    & 'C:\mingw32\bin\g++.exe' -std=c++17 -O0 -g -Wall -Wextra -Werror -pedantic -DPLAYER_UI_PURPLE_THEME=1 -I src -I include tests/player_ui_purple_host.cpp src/player_ui.cpp src/player_ui_purple.cpp -o "$env:TEMP\rt_spark_player_ui_purple_host.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Compilation failed' }
+    & "$env:TEMP\rt_spark_player_ui_purple_host.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+
+Checks cover all eight titles/composers and binary cards, bounded text and icon
+geometry, long-title fallback, startup status duration, the real controller's
+release gate and confirmation deadline, countdown and overlay tick wrap,
+accepted-volume bar widths including 0 and 100, screen restoration and partial
+updates without repeated full-screen clearing. The fixture checks LCD calls;
+actual color/readability, flicker, draw time, audio continuity and RTOS headroom
+require the board checklist in `docs/purple_ui_testing.md`.
